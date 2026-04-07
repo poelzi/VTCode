@@ -1,8 +1,11 @@
 use hashbrown::HashMap;
+use ratatui::crossterm::{
+    cursor::MoveToColumn,
+    execute,
+    terminal::{Clear, ClearType},
+};
 use std::io;
 use std::io::Write;
-
-const CLEAR_CURRENT_LINE: &str = "\r\x1b[2K";
 
 /// Ollama model pull functionality with progress reporting.
 /// Adapted from OpenAI Codex's codex-ollama/src/pull.rs
@@ -54,6 +57,10 @@ impl CliPullProgressReporter {
             totals_by_digest: HashMap::new(),
         }
     }
+
+    fn clear_current_line(out: &mut impl Write) -> io::Result<()> {
+        execute!(out, MoveToColumn(0), Clear(ClearType::CurrentLine))
+    }
 }
 
 impl OllamaPullProgressReporter for CliPullProgressReporter {
@@ -97,7 +104,7 @@ impl OllamaPullProgressReporter for CliPullProgressReporter {
                     if !self.printed_header {
                         let gb = (sum_total as f64) / (1024.0 * 1024.0 * 1024.0);
                         let header = format!("Downloading model: total {gb:.2} GB\n");
-                        out.write_all(CLEAR_CURRENT_LINE.as_bytes())?;
+                        Self::clear_current_line(&mut out)?;
                         out.write_all(header.as_bytes())?;
                         self.printed_header = true;
                     }
