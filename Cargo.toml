@@ -112,6 +112,7 @@ members = [
     "vtcode-core",
     "vtcode-ui",
     "vtcode-utility-tool-specs",
+    "vtcode-tui-widgets",
     "vtcode-commons",
     "vtcode-config",
     "vtcode-indexer",

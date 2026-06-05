@@ -5,6 +5,9 @@ use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, Style as SyntectStyle, ThemeSet};
 use syntect::parsing::{SyntaxReference, SyntaxSet};
+use vtcode_commons::diff_paths::{
+    is_diff_addition_line, is_diff_deletion_line, is_diff_header_line, looks_like_diff_content,
+};
 
 static SYNTAX_SET: Lazy<SyntaxSet> = Lazy::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: Lazy<ThemeSet> = Lazy::new(ThemeSet::load_defaults);
@@ -21,6 +24,12 @@ pub struct MarkdownStyleSheet {
     pub link: Style,
     pub bullet: Style,
     pub rule: Style,
+    /// Style for unified-diff addition lines (`+...`).
+    pub diff_added: Style,
+    /// Style for unified-diff deletion lines (`-...`).
+    pub diff_removed: Style,
+    /// Style for unified-diff metadata/header lines (`diff --git`, `@@`, `+++`, `---`, …).
+    pub diff_header: Style,
 }
 
 impl Default for MarkdownStyleSheet {
@@ -40,6 +49,11 @@ impl Default for MarkdownStyleSheet {
                 .add_modifier(Modifier::UNDERLINED),
             bullet: Style::default().fg(Color::Yellow),
             rule: Style::default().fg(Color::DarkGray),
+            diff_added: Style::default().fg(Color::Green),
+            diff_removed: Style::default().fg(Color::Red),
+            diff_header: Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         }
     }
 }
@@ -219,10 +233,42 @@ fn render_code_block(
         format!("```{language}")
     };
     lines.push(Line::from(Span::styled(fence, styles.quote)));
-    for line in highlight_code(code, language, styles) {
-        lines.push(line);
+    if is_diff_language(language) || (language.is_empty() && looks_like_diff_content(code)) {
+        render_diff_lines(lines, code, styles);
+    } else {
+        for line in highlight_code(code, language, styles) {
+            lines.push(line);
+        }
     }
     lines.push(Line::from(Span::styled("```", styles.quote)));
+}
+
+fn is_diff_language(language: &str) -> bool {
+    matches!(
+        language.trim().to_ascii_lowercase().as_str(),
+        "diff" | "patch" | "udiff" | "git"
+    )
+}
+
+/// Render a unified/git diff with addition/deletion/header coloring. Each line is
+/// classified via the shared `vtcode_commons::diff_paths` heuristics so the same
+/// rules apply everywhere diffs are shown.
+fn render_diff_lines(lines: &mut Vec<Line<'static>>, code: &str, styles: MarkdownStyleSheet) {
+    for raw in code.lines() {
+        let trimmed = raw.trim_start();
+        let style = if trimmed.is_empty() {
+            styles.code
+        } else if is_diff_header_line(trimmed) {
+            styles.diff_header
+        } else if is_diff_addition_line(trimmed) {
+            styles.diff_added
+        } else if is_diff_deletion_line(trimmed) {
+            styles.diff_removed
+        } else {
+            styles.code
+        };
+        lines.push(Line::from(Span::styled(raw.to_string(), style)));
+    }
 }
 
 fn highlight_code(code: &str, language: &str, styles: MarkdownStyleSheet) -> Vec<Line<'static>> {
