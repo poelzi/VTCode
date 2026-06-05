@@ -202,9 +202,11 @@ mod headless {
         pub reasoning_display_mode: super::ReasoningDisplayMode,
         pub reasoning_visible_default: bool,
         pub vim_mode: bool,
+        pub readline_mode: bool,
         pub screen_reader_mode: bool,
         pub reduce_motion_mode: bool,
         pub reduce_motion_keep_progress_animation: bool,
+        pub hide_header: bool,
         pub customization: (),
     }
 

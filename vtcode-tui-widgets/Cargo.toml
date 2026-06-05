@@ -1,0 +1,24 @@
+[package]
+name = "vtcode-tui-widgets"
+version.workspace = true
+edition.workspace = true
+rust-version = "1.88"
+authors = ["Vinh Nguyen <vinhnguyen2308@gmail.com>"]
+description = "Reusable markdown, syntax highlighting, and spinner widgets for VT Code-style TUIs"
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+documentation = "https://docs.rs/vtcode-tui-widgets"
+keywords = ["tui", "terminal", "ratatui", "markdown", "widgets"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+ratatui = { workspace = true, features = ["crossterm"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+syntect = { version = "5.2", default-features = false, features = ["default-fancy"] }
+tui-shimmer = "0.1.3"
+once_cell = { workspace = true }
+unicode-width = { workspace = true }
+
+[lints]
+workspace = true
