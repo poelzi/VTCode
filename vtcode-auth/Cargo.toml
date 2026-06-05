@@ -34,7 +34,13 @@ urlencoding = "2.1"
 schemars = { workspace = true, optional = true, features = ["indexmap2"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-dbus-secret-service-keyring-store = { version = "1.0.0", features = ["crypto-rust", "vendored"] }
+# Gated behind the `dbus-secret` feature so downstreams with their own secret
+# store (e.g. Tixim's tix-secrets) can drop the D-Bus backend via
+# `default-features = false`.
+# `crypto-rust` provides pure-Rust crypto; `vendored` (vendored OpenSSL) is
+# dropped because Tixim's gateway dependency lockdown forbids `openssl` in
+# Cargo.lock (rustls-only TLS policy).
+dbus-secret-service-keyring-store = { version = "1.0.0", default-features = false, features = ["crypto-rust"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.0", features = ["keychain"] }
@@ -46,8 +52,11 @@ windows-native-keyring-store = "1.1.0"
 nix = { version = "0.31", features = ["user"] }
 
 [features]
-default = []
+default = ["dbus-secret"]
 schema = ["dep:schemars"]
+# Linux/FreeBSD Secret Service (D-Bus) keyring backend. On by default for
+# standalone builds; disable it when embedding a different secret store.
+dbus-secret = ["dep:dbus-secret-service-keyring-store"]
 
 [dev-dependencies]
 assert_fs = { workspace = true }

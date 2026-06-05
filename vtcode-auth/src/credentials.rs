@@ -147,7 +147,10 @@ fn ensure_native_keyring_store() -> keyring_core::Result<()> {
         return Ok(());
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "freebsd"),
+        feature = "dbus-secret"
+    ))]
     let store = dbus_secret_service_keyring_store::Store::new_with_configuration(
         &std::collections::HashMap::new(),
     )?;
@@ -162,9 +165,14 @@ fn ensure_native_keyring_store() -> keyring_core::Result<()> {
         &std::collections::HashMap::new(),
     )?;
 
+    // No native store available: either an unsupported platform, or Linux/FreeBSD
+    // with the `dbus-secret` feature disabled (e.g. an embedder that registers
+    // its own `keyring_core` store before calling in).
     #[cfg(not(any(
-        target_os = "linux",
-        target_os = "freebsd",
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            feature = "dbus-secret"
+        ),
         target_os = "macos",
         target_os = "windows"
     )))]
@@ -174,8 +182,18 @@ fn ensure_native_keyring_store() -> keyring_core::Result<()> {
         ));
     }
 
-    keyring_core::set_default_store(store);
-    Ok(())
+    #[cfg(any(
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            feature = "dbus-secret"
+        ),
+        target_os = "macos",
+        target_os = "windows"
+    ))]
+    {
+        keyring_core::set_default_store(store);
+        Ok(())
+    }
 }
 
 /// Returns `true` when access to the OS keyring should be skipped.
