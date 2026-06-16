@@ -1,0 +1,1 @@
+/nix/store/2wnfzw0gb1bp9d1bif8sh730fx3aiih8-opencode-skill-commands/spec-kit/checklist.md

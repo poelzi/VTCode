@@ -1,0 +1,1 @@
+/nix/store/chg6f17kfrz68d343k9yv47g6jazc66k-rtk-0.40.0/share/rtk/hooks/opencode/rtk.ts

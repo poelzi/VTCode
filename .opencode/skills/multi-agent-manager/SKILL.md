@@ -1,0 +1,1 @@
+/nix/store/ix0ywnvvv6ingq1y5fjcil3a5bjpp3w5-opencode-native-skills/multi-agent-manager//SKILL.md
