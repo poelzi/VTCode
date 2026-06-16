@@ -177,9 +177,9 @@ fn ensure_native_keyring_store() -> keyring_core::Result<()> {
         target_os = "windows"
     )))]
     {
-        return Err(keyring_core::Error::NotSupportedByStore(
+        Err(keyring_core::Error::NotSupportedByStore(
             "VT Code does not have a native keyring store configured for this platform".to_string(),
-        ));
+        ))
     }
 
     #[cfg(any(

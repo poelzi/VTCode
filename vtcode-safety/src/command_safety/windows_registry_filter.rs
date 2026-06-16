@@ -2,7 +2,7 @@
 //!
 //! Analyzes PowerShell registry access patterns and filters dangerous paths.
 //! Provides context-aware filtering for:
-//! - Registry hive access (HKLM, HKCU, HKU, HKCR, HKCC)
+//! - Registry root access (HKLM, HKCU, HKU, HKCR, HKCC)
 //! - Dangerous registry paths (Run, Services, Drivers, etc.)
 //! - Access methods (Get-Item, Set-Item, New-ItemProperty, etc.)
 //! - Privilege levels required
@@ -36,7 +36,7 @@ impl std::fmt::Display for RegistryRiskLevel {
 pub struct RegistryPathInfo {
     pub path_pattern: &'static str,
     pub risk_level: RegistryRiskLevel,
-    pub hives: &'static [&'static str],
+    pub registry_roots: &'static [&'static str],
     pub description: &'static str,
 }
 
@@ -50,7 +50,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Run",
             risk_level: RegistryRiskLevel::Critical,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Auto-run programs on system startup",
         },
     );
@@ -60,7 +60,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "RunOnce",
             risk_level: RegistryRiskLevel::Critical,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Auto-run once on next login",
         },
     );
@@ -70,7 +70,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Services",
             risk_level: RegistryRiskLevel::Critical,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Windows services configuration",
         },
     );
@@ -80,7 +80,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Drivers",
             risk_level: RegistryRiskLevel::Critical,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Kernel drivers installation",
         },
     );
@@ -90,7 +90,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "SAM",
             risk_level: RegistryRiskLevel::Critical,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Security Account Manager (password hashes)",
         },
     );
@@ -100,7 +100,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Security",
             risk_level: RegistryRiskLevel::Critical,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Security policy and audit settings",
         },
     );
@@ -111,7 +111,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Credential Manager",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKCU"],
+            registry_roots: &["HKCU"],
             description: "Stored credentials and vault access",
         },
     );
@@ -121,7 +121,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "LSA",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Local Security Authority secrets",
         },
     );
@@ -131,7 +131,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Authentication",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Authentication providers and methods",
         },
     );
@@ -141,7 +141,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Kerberos",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Kerberos authentication settings",
         },
     );
@@ -152,7 +152,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Defender",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Windows Defender/Antimalware settings",
         },
     );
@@ -162,7 +162,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Windows Defender",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Windows Defender configuration",
         },
     );
@@ -172,7 +172,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Policies",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Group Policy Objects and security policies",
         },
     );
@@ -182,7 +182,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "UAC",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "User Account Control bypass settings",
         },
     );
@@ -193,7 +193,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "AppInit_DLLs",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "DLLs loaded into every process",
         },
     );
@@ -203,7 +203,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Winlogon",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Logon process and shell configuration",
         },
     );
@@ -213,7 +213,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "ShellExecuteHooks",
             risk_level: RegistryRiskLevel::High,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Shell execution hooks for code injection",
         },
     );
@@ -224,7 +224,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Environment",
             risk_level: RegistryRiskLevel::Medium,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Environment variables (can affect execution)",
         },
     );
@@ -234,7 +234,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Proxy",
             risk_level: RegistryRiskLevel::Medium,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Proxy settings for network access",
         },
     );
@@ -244,7 +244,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Installer",
             risk_level: RegistryRiskLevel::Medium,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Windows Installer configuration",
         },
     );
@@ -254,7 +254,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Network",
             risk_level: RegistryRiskLevel::Medium,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Network configuration and protocols",
         },
     );
@@ -265,7 +265,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "CurrentVersion",
             risk_level: RegistryRiskLevel::Low,
-            hives: &["HKLM"],
+            registry_roots: &["HKLM"],
             description: "Windows version and product information",
         },
     );
@@ -275,7 +275,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
         RegistryPathInfo {
             path_pattern: "Uninstall",
             risk_level: RegistryRiskLevel::Low,
-            hives: &["HKLM", "HKCU"],
+            registry_roots: &["HKLM", "HKCU"],
             description: "Installed programs list",
         },
     );
@@ -286,7 +286,7 @@ pub fn get_dangerous_registry_paths() -> HashMap<&'static str, RegistryPathInfo>
 /// Registry access pattern
 #[derive(Debug, Clone)]
 pub struct RegistryAccessPattern {
-    pub hive: String,
+    pub registry_root: String,
     pub path: String,
     pub access_method: String,
     pub risk_level: RegistryRiskLevel,
@@ -329,7 +329,7 @@ impl RegistryAccessFilter {
                     || script_lower
                         .contains(&format!("hkcu:\\{}", info.path_pattern.to_lowercase()))
                 {
-                    let hive = if script_lower
+                    let registry_root = if script_lower
                         .contains(&format!("hklm:\\{}", info.path_pattern.to_lowercase()))
                     {
                         "HKLM".to_string()
@@ -338,7 +338,7 @@ impl RegistryAccessFilter {
                     };
 
                     patterns.push(RegistryAccessPattern {
-                        hive,
+                        registry_root,
                         path: info.path_pattern.to_string(),
                         access_method: "Get-Item/Get-ItemProperty".to_string(),
                         risk_level: info.risk_level,
@@ -351,14 +351,17 @@ impl RegistryAccessFilter {
         // Detect Set-Item/Set-ItemProperty (write operations)
         if script_lower.contains("set-item") || script_lower.contains("set-itemproperty") {
             for (_, info) in get_dangerous_registry_paths().iter() {
-                let hive_patterns = vec!["hklm:\\", "hkcu:\\"];
-                for hive_pattern in hive_patterns {
-                    let full_pattern =
-                        format!("{}{}", hive_pattern, info.path_pattern.to_lowercase());
+                let registry_root_patterns = vec!["hklm:\\", "hkcu:\\"];
+                for registry_root_pattern in registry_root_patterns {
+                    let full_pattern = format!(
+                        "{}{}",
+                        registry_root_pattern,
+                        info.path_pattern.to_lowercase()
+                    );
                     if script_lower.contains(&full_pattern) {
-                        let hive = hive_pattern.replace(":\\", "").to_uppercase();
+                        let registry_root = registry_root_pattern.replace(":\\", "").to_uppercase();
                         patterns.push(RegistryAccessPattern {
-                            hive,
+                            registry_root,
                             path: info.path_pattern.to_string(),
                             access_method: "Set-Item/Set-ItemProperty".to_string(),
                             risk_level: info.risk_level,
@@ -375,7 +378,7 @@ impl RegistryAccessFilter {
                 let pattern = format!("run|runonce|services|{}", info.path_pattern.to_lowercase());
                 if script_lower.contains(&pattern) {
                     patterns.push(RegistryAccessPattern {
-                        hive: "HKLM/HKCU".to_string(),
+                        registry_root: "HKLM/HKCU".to_string(),
                         path: info.path_pattern.to_string(),
                         access_method: "New-ItemProperty".to_string(),
                         risk_level: info.risk_level,
@@ -428,7 +431,7 @@ mod tests {
     fn test_get_run_path_info() {
         let info = RegistryAccessFilter::get_path_info("run").unwrap();
         assert_eq!(info.risk_level, RegistryRiskLevel::Critical);
-        assert!(info.hives.contains(&"HKLM"));
+        assert!(info.registry_roots.contains(&"HKLM"));
     }
 
     #[test]
