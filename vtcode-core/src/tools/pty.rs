@@ -184,6 +184,12 @@ mod headless_pty {
             Err(anyhow!("PTY support disabled in headless build"))
         }
 
+        pub fn is_output_drained(&self, _session_id: &str) -> Result<bool> {
+            // No PTY sessions exist in headless builds, so there is never any
+            // buffered output left to drain.
+            Ok(true)
+        }
+
         pub fn terminate_session(&self, _session_id: &str) -> Result<()> {
             Err(anyhow!("PTY support disabled in headless build"))
         }

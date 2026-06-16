@@ -610,7 +610,10 @@ impl AnsiRenderer {
         };
 
         if let Some(sink) = &mut self.sink {
-            // Read terminal width fresh so tables adapt to resizes.
+            // Read terminal width fresh so tables adapt to resizes. `crossterm`
+            // is only available under the `tui` feature; headless builds leave
+            // the width unset (the sink falls back to its default).
+            #[cfg(feature = "tui")]
             if let Ok((w, _)) = crossterm::terminal::size() {
                 sink.table_max_width = Some(w as usize);
             }
@@ -677,7 +680,10 @@ impl AnsiRenderer {
         let base_style = style.style();
         let indent = style.indent();
         if let Some(sink) = &mut self.sink {
-            // Read terminal width fresh so tables adapt to resizes.
+            // Read terminal width fresh so tables adapt to resizes. `crossterm`
+            // is only available under the `tui` feature; headless builds leave
+            // the width unset (the sink falls back to its default).
+            #[cfg(feature = "tui")]
             if let Ok((w, _)) = crossterm::terminal::size() {
                 sink.table_max_width = Some(w as usize);
             }
