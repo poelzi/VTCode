@@ -7437,6 +7437,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "vtcode-tui-widgets"
+version = "0.131.1"
+dependencies = [
+ "once_cell",
+ "pulldown-cmark",
+ "ratatui",
+ "syntect",
+ "tui-shimmer",
+ "unicode-width",
+ "vtcode-commons",
+]
+
+[[package]]
 name = "vtcode-ui"
 version = "0.131.1"
 dependencies = [
@@ -7480,19 +7493,6 @@ dependencies = [
  "unicode-width",
  "vtcode-commons",
  "vtcode-config",
-]
-
-[[package]]
-name = "vtcode-tui-widgets"
-version = "0.121.1"
-dependencies = [
- "once_cell",
- "pulldown-cmark",
- "ratatui",
- "syntect",
- "tui-shimmer",
- "unicode-width",
- "vtcode-commons",
 ]
 
 [[package]]
