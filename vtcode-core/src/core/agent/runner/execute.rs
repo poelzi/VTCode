@@ -848,7 +848,9 @@ impl AgentRunner {
                         .is_none_or(|tool_calls| tool_calls.is_empty())
                     && !response.content_text().is_empty()
                 {
-                    if check_for_response_loop(response.content_text(), &mut runtime.state) {
+                    if self.loop_detector.lock().detect_repetitive_responses()
+                        && check_for_response_loop(response.content_text(), &mut runtime.state)
+                    {
                         self.runner_println(format_args!(
                             "[{}] {}",
                             self.agent_type,

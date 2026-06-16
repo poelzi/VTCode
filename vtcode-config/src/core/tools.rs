@@ -67,6 +67,126 @@ pub struct ToolsConfig {
     /// and lower limits for mutating tools.
     #[serde(default)]
     pub loop_thresholds: IndexMap<String, usize>,
+
+    /// Tunable thresholds for the heuristic loop detector. Defaults preserve the
+    /// historical hard-coded behavior; orchestrator/manager agents that
+    /// legitimately repeat and oscillate between planning/spawn/poll tools can
+    /// relax or disable individual heuristics (0/false = disabled).
+    #[serde(default)]
+    pub loop_detection: LoopDetectionConfig,
+}
+
+/// Tunable thresholds for [`crate`]'s heuristic loop detector
+/// (`vtcode-core`'s `LoopDetector`). Every field defaults to the historical
+/// constant, so an unset config behaves exactly as before. A `0` (or `false`)
+/// disables the corresponding heuristic.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LoopDetectionConfig {
+    /// Soft per-tool call ceiling within the detection window for read-only
+    /// tools (read/grep/list/search). `0` disables the ceiling.
+    #[serde(default = "default_ld_max_readonly")]
+    pub max_readonly_tool_calls: usize,
+    /// Soft ceiling for mutating tools (write/edit/apply_patch). `0` disables.
+    #[serde(default = "default_ld_max_write")]
+    pub max_write_tool_calls: usize,
+    /// Soft ceiling for command tools (shell/unified_exec). `0` disables.
+    #[serde(default = "default_ld_max_command")]
+    pub max_command_tool_calls: usize,
+    /// Soft ceiling for all other tools (e.g. planner.*, workflow.*). `0`
+    /// disables — orchestrators poll these constantly.
+    #[serde(default = "default_ld_max_other")]
+    pub max_other_tool_calls: usize,
+    /// Sliding window (in recent operations) the soft ceilings count over.
+    #[serde(default = "default_ld_detection_window")]
+    pub detection_window: usize,
+    /// Hard-stop multiplier applied to the soft ceiling (`hard = soft * mult`).
+    #[serde(default = "default_ld_hard_multiplier")]
+    pub hard_limit_multiplier: usize,
+    /// Same-target repeated-read streak that hard-stops a read loop. `0`
+    /// disables the read-loop heuristic.
+    #[serde(default = "default_ld_read_target_calls")]
+    pub read_target_max_calls: usize,
+    /// Max argument variants tolerated within a read-loop streak.
+    #[serde(default = "default_ld_read_target_variants")]
+    pub read_target_max_variants: usize,
+    /// Consecutive read-only ("navigation") calls before a warning. `0`
+    /// disables the navigation-loop heuristic.
+    #[serde(default = "default_ld_nav_warning")]
+    pub navigation_warning_streak: usize,
+    /// Consecutive read-only calls before a hard stop. `0` disables the
+    /// navigation hard stop (the warning may still fire).
+    #[serde(default = "default_ld_nav_hardstop")]
+    pub navigation_hardstop_streak: usize,
+    /// Cooldown (seconds) between repeated soft-limit / navigation warnings.
+    #[serde(default = "default_ld_cooldown_secs")]
+    pub warning_cooldown_secs: u64,
+    /// Detect oscillating tool sequences (A→B→A→B). `false` disables.
+    #[serde(default = "default_ld_oscillation")]
+    pub oscillation_enabled: bool,
+    /// Detect identical repeated assistant responses. `false` disables.
+    #[serde(default = "default_ld_repetitive_responses")]
+    pub detect_repetitive_responses: bool,
+}
+
+const fn default_ld_max_readonly() -> usize {
+    10
+}
+const fn default_ld_max_write() -> usize {
+    3
+}
+const fn default_ld_max_command() -> usize {
+    5
+}
+const fn default_ld_max_other() -> usize {
+    3
+}
+const fn default_ld_detection_window() -> usize {
+    10
+}
+const fn default_ld_hard_multiplier() -> usize {
+    2
+}
+const fn default_ld_read_target_calls() -> usize {
+    4
+}
+const fn default_ld_read_target_variants() -> usize {
+    3
+}
+const fn default_ld_nav_warning() -> usize {
+    6
+}
+const fn default_ld_nav_hardstop() -> usize {
+    10
+}
+const fn default_ld_cooldown_secs() -> u64 {
+    30
+}
+const fn default_ld_oscillation() -> bool {
+    true
+}
+const fn default_ld_repetitive_responses() -> bool {
+    true
+}
+
+impl Default for LoopDetectionConfig {
+    fn default() -> Self {
+        Self {
+            max_readonly_tool_calls: default_ld_max_readonly(),
+            max_write_tool_calls: default_ld_max_write(),
+            max_command_tool_calls: default_ld_max_command(),
+            max_other_tool_calls: default_ld_max_other(),
+            detection_window: default_ld_detection_window(),
+            hard_limit_multiplier: default_ld_hard_multiplier(),
+            read_target_max_calls: default_ld_read_target_calls(),
+            read_target_max_variants: default_ld_read_target_variants(),
+            navigation_warning_streak: default_ld_nav_warning(),
+            navigation_hardstop_streak: default_ld_nav_hardstop(),
+            warning_cooldown_secs: default_ld_cooldown_secs(),
+            oscillation_enabled: default_ld_oscillation(),
+            detect_repetitive_responses: default_ld_repetitive_responses(),
+        }
+    }
 }
 
 /// External editor integration configuration
@@ -154,6 +274,7 @@ impl Default for ToolsConfig {
             plugins: PluginRuntimeConfig::default(),
             editor: EditorToolConfig::default(),
             loop_thresholds: IndexMap::new(),
+            loop_detection: LoopDetectionConfig::default(),
         }
     }
 }

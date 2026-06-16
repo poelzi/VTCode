@@ -322,7 +322,8 @@ impl AgentRunner {
             &prompt_context,
         )
         .await?;
-        let loop_detector = LoopDetector::with_max_repeated_calls(max_repeated_tool_calls);
+        let mut loop_detector = LoopDetector::with_max_repeated_calls(max_repeated_tool_calls);
+        loop_detector.apply_loop_detection(session_config.effective().tools.loop_detection.clone());
         let bootstrap_messages = bootstrap.messages.clone();
         let mut bootstrap = bootstrap;
         if bootstrap.metadata.is_none() {

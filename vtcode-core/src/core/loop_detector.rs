@@ -11,15 +11,19 @@ use hashbrown::{HashMap, HashSet};
 use std::collections::VecDeque;
 use std::time::Instant;
 
-// Separate limits for different operation types to reduce false positives
-const MAX_READONLY_TOOL_CALLS: usize = 10; // read_file, grep_file, list_files
-const MAX_WRITE_TOOL_CALLS: usize = 3; // write_file, edit_file, apply_patch
-const MAX_COMMAND_TOOL_CALLS: usize = 5; // shell, unified_exec
-const MAX_OTHER_TOOL_CALLS: usize = 3; // Other tools (default)
+// Initial recent-calls ring capacity hint. The live detection window and all
+// per-category / heuristic thresholds are configurable via `LoopDetectionConfig`
+// (`self.detection`); the constants below are retained only as the canonical
+// default values asserted by the unit tests.
 const DETECTION_WINDOW: usize = 10;
+#[cfg(test)]
+const MAX_READONLY_TOOL_CALLS: usize = 10; // read_file, grep_file, list_files
+#[cfg(test)]
+const MAX_WRITE_TOOL_CALLS: usize = 3; // write_file, edit_file, apply_patch
+#[cfg(test)]
 const HARD_LIMIT_MULTIPLIER: usize = 2; // Hard stop at 2x soft limit
+#[cfg(test)]
 const MAX_SIMILAR_READ_TARGET_CALLS: usize = 4;
-const MAX_SIMILAR_READ_TARGET_VARIANTS: usize = 3;
 const LEGACY_GREP_FILE: &str = tools::GREP_FILE;
 const LEGACY_LIST_FILES: &str = tools::LIST_FILES;
 const LEGACY_SEARCH_TOOLS: &str = "search_tools";
@@ -149,6 +153,10 @@ pub struct LoopDetector {
     /// Tracks consecutive read-only calls without any write/execution progress.
     /// Resets on any mutating tool call.
     readonly_streak: usize,
+    /// Tunable heuristic thresholds. Defaults reproduce the historical
+    /// hard-coded constants; callers (e.g. orchestrator/manager agents) can
+    /// relax or disable individual heuristics via [`Self::apply_loop_detection`].
+    detection: crate::config::core::LoopDetectionConfig,
 }
 
 impl LoopDetector {
@@ -166,7 +174,23 @@ impl LoopDetector {
             custom_limits: HashMap::new(),
             norm_cache: HashMap::with_capacity(16),
             readonly_streak: 0,
+            detection: crate::config::core::LoopDetectionConfig::default(),
         }
+    }
+
+    /// Override the heuristic loop-detection thresholds (oscillation, navigation
+    /// streaks, per-tool soft/hard ceilings, read-target loop, cooldown). A `0`
+    /// (or `false`) field disables that heuristic. Used to relax detection for
+    /// orchestrator/manager agents whose normal behavior is to repeat and
+    /// oscillate between planning/spawn/poll tools.
+    pub fn apply_loop_detection(&mut self, cfg: crate::config::core::LoopDetectionConfig) {
+        self.detection = cfg;
+    }
+
+    /// Whether the repetitive-assistant-response heuristic should run. `false`
+    /// disables it (orchestrators may legitimately emit similar status text).
+    pub fn detect_repetitive_responses(&self) -> bool {
+        self.detection.detect_repetitive_responses
     }
 
     /// Set a custom limit for a specific tool.
@@ -220,7 +244,8 @@ impl LoopDetector {
 
                 if identical {
                     // Escalate to hard limit so callers halt immediately.
-                    let hard_limit = self.get_limit_for_tool(tool_name) * HARD_LIMIT_MULTIPLIER;
+                    let hard_limit =
+                        self.get_limit_for_tool(tool_name) * self.detection.hard_limit_multiplier;
                     self.tool_counts.insert(tool_name.to_string(), hard_limit);
 
                     return Some(format!(
@@ -238,7 +263,7 @@ impl LoopDetector {
             timestamp: Instant::now(),
         };
 
-        if self.recent_calls.len() >= DETECTION_WINDOW
+        if self.recent_calls.len() >= self.detection.detection_window.max(1)
             && let Some(old) = self.recent_calls.pop_front()
             && let Some(count) = self.tool_counts.get_mut(&old.tool_name)
         {
@@ -281,11 +306,15 @@ impl LoopDetector {
             self.readonly_streak = 0;
         }
 
-        const MAX_NAVIGATION_ONLY_STREAK: usize = 6;
-        const NAVIGATION_HARD_STOP_STREAK: usize = 10;
-        if self.readonly_streak >= MAX_NAVIGATION_ONLY_STREAK {
-            if self.readonly_streak >= NAVIGATION_HARD_STOP_STREAK {
-                let hard_limit = self.get_limit_for_tool(tool_name) * HARD_LIMIT_MULTIPLIER;
+        // Navigation-loop heuristic. `navigation_warning_streak == 0` disables
+        // it entirely; `navigation_hardstop_streak == 0` disables only the hard
+        // stop (the warning may still fire).
+        let nav_warn = self.detection.navigation_warning_streak;
+        let nav_hard = self.detection.navigation_hardstop_streak;
+        if nav_warn > 0 && self.readonly_streak >= nav_warn {
+            if nav_hard > 0 && self.readonly_streak >= nav_hard {
+                let hard_limit =
+                    self.get_limit_for_tool(tool_name) * self.detection.hard_limit_multiplier;
                 self.tool_counts.insert(tool_name.to_string(), hard_limit);
                 return Some(format!(
                     "HARD STOP: {} consecutive exploration calls without taking action. \
@@ -308,7 +337,9 @@ impl LoopDetector {
             let now = Instant::now();
             let should_warn = self
                 .last_warning
-                .map(|last| now.duration_since(last).as_secs() > 30)
+                .map(|last| {
+                    now.duration_since(last).as_secs() > self.detection.warning_cooldown_secs
+                })
                 .unwrap_or(true);
 
             if should_warn {
@@ -317,7 +348,11 @@ impl LoopDetector {
             }
         }
 
-        if let Some(pattern_warning) = self.detect_patterns() {
+        // Oscillation heuristic (A→B→A→B); disabled when `oscillation_enabled`
+        // is false (orchestrators legitimately cycle planning/spawn/poll tools).
+        if self.detection.oscillation_enabled
+            && let Some(pattern_warning) = self.detect_patterns()
+        {
             return Some(pattern_warning);
         }
 
@@ -327,12 +362,17 @@ impl LoopDetector {
     fn check_for_loops(&mut self, tool_name: &str) -> Option<String> {
         let count = self.tool_counts.get(tool_name).copied().unwrap_or(0);
 
-        // Determine tool-specific limits
+        // Determine tool-specific limits. `0` disables the per-tool soft/hard
+        // ceiling for this category (e.g. relaxed orchestrators polling
+        // planner.*/workflow.* tools).
         let max_calls = self.get_limit_for_tool(tool_name);
+        if max_calls == 0 {
+            return None;
+        }
 
         // Hard limit check - immediate halt
-        let hard_limit = max_calls * HARD_LIMIT_MULTIPLIER;
-        if count >= hard_limit {
+        let hard_limit = max_calls * self.detection.hard_limit_multiplier;
+        if hard_limit > 0 && count >= hard_limit {
             return Some(format!(
                 "CRITICAL: Tool '{}' called {} times (hard limit: {}). Execution halted to prevent infinite loop.\n\
                  Agent must reformulate task or request user guidance.",
@@ -345,7 +385,9 @@ impl LoopDetector {
             let now = Instant::now();
             let should_warn = self
                 .last_warning
-                .map(|last| now.duration_since(last).as_secs() > 30)
+                .map(|last| {
+                    now.duration_since(last).as_secs() > self.detection.warning_cooldown_secs
+                })
                 .unwrap_or(true);
 
             if should_warn {
@@ -356,7 +398,7 @@ impl LoopDetector {
                     "Loop detected: '{}' called {} times in last {} operations.\n\n\
                      {}\n\n\
                      Hard limit at {} calls.",
-                    tool_name, count, DETECTION_WINDOW, alternatives, hard_limit
+                    tool_name, count, self.detection.detection_window, alternatives, hard_limit
                 ));
             }
         }
@@ -409,10 +451,13 @@ impl LoopDetector {
             }
         }
 
-        if same_target_streak >= MAX_SIMILAR_READ_TARGET_CALLS
-            && variants.len() <= MAX_SIMILAR_READ_TARGET_VARIANTS
+        // `read_target_max_calls == 0` disables the read-loop heuristic.
+        if self.detection.read_target_max_calls > 0
+            && same_target_streak >= self.detection.read_target_max_calls
+            && variants.len() <= self.detection.read_target_max_variants
         {
-            let hard_limit = self.get_limit_for_tool(tool_name) * HARD_LIMIT_MULTIPLIER;
+            let hard_limit =
+                self.get_limit_for_tool(tool_name) * self.detection.hard_limit_multiplier;
             self.tool_counts.insert(tool_name.to_string(), hard_limit);
             return Some(format!(
                 "HARD STOP: Repeated '{}' calls for '{}' with minimal argument variation ({}-call streak, {} variants). \
@@ -435,7 +480,8 @@ impl LoopDetector {
     pub fn is_hard_limit_exceeded(&self, tool_name: &str) -> bool {
         let count = self.tool_counts.get(tool_name).copied().unwrap_or(0);
         let max_calls = self.get_limit_for_tool(tool_name);
-        count >= max_calls * HARD_LIMIT_MULTIPLIER
+        let hard_limit = max_calls * self.detection.hard_limit_multiplier;
+        hard_limit > 0 && count >= hard_limit
     }
 
     /// Get current call count for a tool
@@ -532,21 +578,23 @@ impl LoopDetector {
         if base_name == tools::UNIFIED_FILE {
             if let Some((_, action)) = tool_name.split_once("::") {
                 return if action.eq_ignore_ascii_case("read") {
-                    MAX_READONLY_TOOL_CALLS
+                    self.detection.max_readonly_tool_calls
                 } else {
-                    MAX_WRITE_TOOL_CALLS
+                    self.detection.max_write_tool_calls
                 };
             }
-            return MAX_READONLY_TOOL_CALLS;
+            return self.detection.max_readonly_tool_calls;
         }
 
         match base_name {
             tools::READ_FILE | LEGACY_GREP_FILE | LEGACY_LIST_FILES | tools::UNIFIED_SEARCH => {
-                MAX_READONLY_TOOL_CALLS
+                self.detection.max_readonly_tool_calls
             }
-            tools::WRITE_FILE | tools::EDIT_FILE | tools::APPLY_PATCH => MAX_WRITE_TOOL_CALLS,
-            _ if is_command_tool_name(base_name) => MAX_COMMAND_TOOL_CALLS,
-            _ => MAX_OTHER_TOOL_CALLS,
+            tools::WRITE_FILE | tools::EDIT_FILE | tools::APPLY_PATCH => {
+                self.detection.max_write_tool_calls
+            }
+            _ if is_command_tool_name(base_name) => self.detection.max_command_tool_calls,
+            _ => self.detection.max_other_tool_calls,
         }
     }
 
@@ -677,6 +725,80 @@ fn read_target_for_tool_call(tool_name: &str, args: &serde_json::Value) -> Optio
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn relaxed_config_disables_orchestrator_heuristics() {
+        use crate::config::core::LoopDetectionConfig;
+        // An orchestrator/manager relaxed profile: pattern heuristics off and the
+        // "other" tool soft/hard ceiling disabled (planner.*/workflow.* polling).
+        let mut detector = LoopDetector::new();
+        detector.apply_loop_detection(LoopDetectionConfig {
+            oscillation_enabled: false,
+            navigation_warning_streak: 0,
+            navigation_hardstop_streak: 0,
+            read_target_max_calls: 0,
+            max_other_tool_calls: 0,
+            detect_repetitive_responses: false,
+            ..LoopDetectionConfig::default()
+        });
+        let args = json!({});
+        let seq = [
+            "planner.add-task",
+            "workers.spawn",
+            "planner.assign-task",
+            "planner.start-task",
+            "workers.status",
+            "workflow.report",
+        ];
+        // Repeat the orchestration cycle well past every default threshold.
+        for _ in 0..8 {
+            for tool in seq {
+                let warning = detector.record_call(tool, &args);
+                assert!(
+                    warning.is_none(),
+                    "relaxed orchestrator config tripped on '{tool}': {warning:?}"
+                );
+            }
+        }
+        assert!(!detector.detect_repetitive_responses());
+
+        // Regression guard for non-managers: a tight A→B oscillation (distinct
+        // args each call, so the identical-call stop doesn't fire) is still
+        // caught by the DEFAULT config's oscillation heuristic...
+        let mut strict = LoopDetector::new();
+        let mut strict_tripped = false;
+        'strict: for n in 0..8 {
+            for tool in ["alpha.tool", "beta.tool"] {
+                if strict.record_call(tool, &json!({ "n": n })).is_some() {
+                    strict_tripped = true;
+                    break 'strict;
+                }
+            }
+        }
+        assert!(
+            strict_tripped,
+            "default config should detect an A→B oscillation"
+        );
+
+        // ...and the relaxed (oscillation-off) config does NOT trip on it.
+        let mut relaxed = LoopDetector::new();
+        relaxed.apply_loop_detection(LoopDetectionConfig {
+            oscillation_enabled: false,
+            navigation_warning_streak: 0,
+            navigation_hardstop_streak: 0,
+            read_target_max_calls: 0,
+            max_other_tool_calls: 0,
+            ..LoopDetectionConfig::default()
+        });
+        for n in 0..8 {
+            for tool in ["alpha.tool", "beta.tool"] {
+                assert!(
+                    relaxed.record_call(tool, &json!({ "n": n })).is_none(),
+                    "relaxed config must not trip on an A→B oscillation"
+                );
+            }
+        }
+    }
 
     #[test]
     fn test_immediate_repetition_detection() {
