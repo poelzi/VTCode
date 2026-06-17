@@ -71,6 +71,12 @@ pub struct OpenAIProvider {
     model: Arc<str>,
     supported_models_override: Option<Vec<String>>,
     responses_api_modes: Mutex<HashMap<String, ResponsesApiState>>,
+    /// Whether the configured backend serves the OpenAI Responses API. `true`
+    /// for the real OpenAI API / ChatGPT backend; set `false` by wrappers that
+    /// target a chat-completions-only OpenAI-compatible endpoint (e.g. the
+    /// LM Studio provider), which forces all requests onto
+    /// `/v1/chat/completions` regardless of model.
+    responses_api_supported: bool,
     prompt_cache_enabled: bool,
     prompt_cache_settings: OpenAIPromptCacheSettings,
     model_behavior: Option<ModelConfig>,
@@ -187,6 +193,7 @@ impl OpenAIProvider {
             prompt_cache_enabled: false,
             prompt_cache_settings: Default::default(),
             responses_api_modes: Mutex::new(HashMap::new()),
+            responses_api_supported: true,
             model_behavior: None,
             websocket_mode: false,
             responses_store: None,
@@ -222,6 +229,16 @@ impl OpenAIProvider {
             openai,
             model_behavior,
         )
+    }
+
+    /// Force all requests onto `/v1/chat/completions` by disabling the OpenAI
+    /// Responses API. Used by wrappers (LM Studio, llama.cpp) that target a
+    /// chat-completions-only OpenAI-compatible backend, where the Responses API
+    /// is unavailable and `gpt-5*` models would otherwise 400/404.
+    #[must_use]
+    pub fn with_responses_api_disabled(mut self) -> Self {
+        self.responses_api_supported = false;
+        self
     }
 
     /// Create a custom OpenAI-compatible provider with overridden identity.
@@ -336,6 +353,7 @@ impl OpenAIProvider {
             model: Arc::from(model.as_str()),
             supported_models_override: None,
             responses_api_modes: Mutex::new(responses_api_modes),
+            responses_api_supported: true,
             prompt_cache_enabled,
             prompt_cache_settings,
             model_behavior,
@@ -614,6 +632,11 @@ impl OpenAIProvider {
                 poisoned.into_inner()
             }
         };
+        if !self.responses_api_supported {
+            // Providers that wrap OpenAIProvider against a chat-completions-only
+            // backend (e.g. LM Studio, llama.cpp) never serve the Responses API.
+            return ResponsesApiState::Disabled;
+        }
         *modes
             .entry(model.to_string())
             .or_insert_with(|| Self::default_responses_state(model))

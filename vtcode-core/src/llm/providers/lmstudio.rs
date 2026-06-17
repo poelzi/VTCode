@@ -148,6 +148,11 @@ impl LmStudioProvider {
     ) -> OpenAIProvider {
         let resolved_model = resolve_model(model, models::lmstudio::DEFAULT_MODEL);
         let resolved_base = Self::resolve_base_url(base_url);
+        // LM Studio is an OpenAI-*compatible* server that serves only
+        // `/v1/chat/completions` — it does not implement the Responses API. Pin
+        // the inner OpenAI provider to chat completions so `gpt-5*`-style models
+        // (which would default to the Responses API on the real OpenAI host)
+        // don't 400/404 against LM Studio or a gateway proxied through it.
         OpenAIProvider::from_config(
             api_key,
             None,
@@ -159,6 +164,7 @@ impl LmStudioProvider {
             None,
             model_behavior,
         )
+        .with_responses_api_disabled()
     }
 
     pub fn new(api_key: String) -> Self {
@@ -182,7 +188,8 @@ impl LmStudioProvider {
             http_client,
             base_url,
             timeouts,
-        );
+        )
+        .with_responses_api_disabled();
         Self { inner }
     }
 
