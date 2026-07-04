@@ -547,6 +547,11 @@ impl AgentRunner {
     /// Issue a tool-less, single-turn JSON-only request against the active
     /// provider and decode the response into `T`. Used by harness sub-roles
     /// (planner, evaluator) that need structured output with no tool calls.
+    ///
+    /// Retries transient provider failures (429 rate limits, 5xx, network)
+    /// with bounded exponential backoff: these single-shot sub-role calls
+    /// otherwise kill an entire long-running turn on one throttled request
+    /// ("planner request failed: Rate limit exceeded").
     async fn request_json_only<T>(
         &mut self,
         system_prompt: &'static str,
@@ -559,21 +564,48 @@ impl AgentRunner {
     where
         T: for<'de> Deserialize<'de>,
     {
+        const MAX_ATTEMPTS: u32 = 6;
+        const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
         let model = self.get_selected_model();
-        let response = self
-            .provider_client
-            .generate(LLMRequest {
-                messages: vec![Message::user(user_prompt)],
-                system_prompt: Some(std::sync::Arc::new(system_prompt.to_string())),
-                tools: Some(std::sync::Arc::new(Vec::<ToolDefinition>::new())),
-                model,
-                stream: false,
-                temperature: Some(temperature),
-                max_tokens: Some(max_tokens),
-                ..Default::default()
-            })
-            .await
-            .context(request_label)?;
+        let mut attempt: u32 = 0;
+        let response = loop {
+            let result = self
+                .provider_client
+                .generate(LLMRequest {
+                    messages: vec![Message::user(user_prompt.clone())],
+                    system_prompt: Some(std::sync::Arc::new(system_prompt.to_string())),
+                    tools: Some(std::sync::Arc::new(Vec::<ToolDefinition>::new())),
+                    model: model.clone(),
+                    stream: false,
+                    temperature: Some(temperature),
+                    max_tokens: Some(max_tokens),
+                    ..Default::default()
+                })
+                .await;
+            match result {
+                Ok(response) => break response,
+                Err(error) => {
+                    let err = anyhow::Error::from(error);
+                    attempt += 1;
+                    if attempt >= MAX_ATTEMPTS
+                        || !crate::core::orchestrator_retry::is_retryable_error(&err)
+                    {
+                        return Err(err.context(request_label));
+                    }
+                    let backoff =
+                        std::time::Duration::from_secs(1u64 << attempt.min(5)).min(MAX_BACKOFF);
+                    tracing::warn!(
+                        target: "vtcode.subrole.retry",
+                        attempt,
+                        max_attempts = MAX_ATTEMPTS,
+                        backoff_secs = backoff.as_secs(),
+                        error = %err,
+                        "{request_label}: transient provider error; retrying"
+                    );
+                    tokio::time::sleep(backoff).await;
+                }
+            }
+        };
         let content = response.content.unwrap_or_default();
         parse_json_response::<T>(content.as_str()).context(parse_label)
     }
