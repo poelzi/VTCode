@@ -5,7 +5,7 @@ use crate::core::agent::harness_artifacts;
 use crate::core::agent::session::AgentSessionState;
 use crate::core::agent::task::Task;
 use crate::exec::events::HarnessEventKind;
-use crate::llm::provider::{LLMRequest, Message, ToolDefinition};
+use crate::llm::provider::{FinishReason, LLMRequest, Message, ToolDefinition};
 use crate::tools::handlers::TaskTrackerTool;
 use crate::tools::traits::Tool;
 use anyhow::{Context, Result};
@@ -552,6 +552,11 @@ impl AgentRunner {
     /// with bounded exponential backoff: these single-shot sub-role calls
     /// otherwise kill an entire long-running turn on one throttled request
     /// ("planner request failed: Rate limit exceeded").
+    ///
+    /// Malformed content is retried too (bounded separately): a truncated
+    /// response (finish_reason=length) doubles max_tokens before re-asking,
+    /// junk JSON gets one strict-JSON nudge — otherwise one bad model turn
+    /// kills the whole run ("parse planner response: decode json payload: EOF").
     async fn request_json_only<T>(
         &mut self,
         system_prompt: &'static str,
@@ -565,14 +570,19 @@ impl AgentRunner {
         T: for<'de> Deserialize<'de>,
     {
         const MAX_ATTEMPTS: u32 = 6;
+        const MAX_PARSE_ATTEMPTS: u32 = 3;
+        const MAX_TOKENS_CAP: u32 = 16_384;
         const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(30);
         let model = self.get_selected_model();
         let mut attempt: u32 = 0;
-        let response = loop {
+        let mut parse_attempts: u32 = 0;
+        let mut max_tokens = max_tokens;
+        let mut prompt = user_prompt;
+        loop {
             let result = self
                 .provider_client
                 .generate(LLMRequest {
-                    messages: vec![Message::user(user_prompt.clone())],
+                    messages: vec![Message::user(prompt.clone())],
                     system_prompt: Some(std::sync::Arc::new(system_prompt.to_string())),
                     tools: Some(std::sync::Arc::new(Vec::<ToolDefinition>::new())),
                     model: model.clone(),
@@ -582,8 +592,8 @@ impl AgentRunner {
                     ..Default::default()
                 })
                 .await;
-            match result {
-                Ok(response) => break response,
+            let response = match result {
+                Ok(response) => response,
                 Err(error) => {
                     let err = anyhow::Error::from(error);
                     attempt += 1;
@@ -603,11 +613,38 @@ impl AgentRunner {
                         "{request_label}: transient provider error; retrying"
                     );
                     tokio::time::sleep(backoff).await;
+                    continue;
+                }
+            };
+            let truncated = matches!(response.finish_reason, FinishReason::Length);
+            let content = response.content.unwrap_or_default();
+            match parse_json_response::<T>(content.as_str()) {
+                Ok(parsed) => return Ok(parsed),
+                Err(err) => {
+                    parse_attempts += 1;
+                    if parse_attempts >= MAX_PARSE_ATTEMPTS {
+                        return Err(err.context(parse_label));
+                    }
+                    if truncated {
+                        // An identical retry re-truncates; grow the budget instead.
+                        max_tokens = max_tokens.saturating_mul(2).min(MAX_TOKENS_CAP);
+                    } else if parse_attempts == 1 {
+                        prompt.push_str(
+                            "\n\nYour previous response was not valid JSON. Return ONLY the strict JSON object, with no prose and no code fences.",
+                        );
+                    }
+                    tracing::warn!(
+                        target: "vtcode.subrole.retry",
+                        parse_attempts,
+                        max_parse_attempts = MAX_PARSE_ATTEMPTS,
+                        truncated,
+                        max_tokens,
+                        error = %err,
+                        "{parse_label}: malformed model response; retrying"
+                    );
                 }
             }
-        };
-        let content = response.content.unwrap_or_default();
-        parse_json_response::<T>(content.as_str()).context(parse_label)
+        }
     }
 
     async fn request_planner_response(&mut self, task: &Task) -> Result<PlannerResponse> {
